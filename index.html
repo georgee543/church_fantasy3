@@ -716,10 +716,7 @@
             { id: 10, name: "Youssef Ashraf", position: "FWD", price: 8.5, points: 29 },
             { id: 11, name: "John Nabil", position: "FWD", price: 7.0, points: 14 }
         ];
-
-        let players = JSON.parse(localStorage.getItem('mg_players')) || DEFAULT_PLAYERS;
         let users = JSON.parse(localStorage.getItem('mg_users')) || [];
-        let fixtures = JSON.parse(localStorage.getItem('mg_fixtures')) || [
             { id: 1, gw: "Church Tournament - Matchday 1", teamA: "St. Mark Warriors", teamB: "St. George Lions", dateTime: "Friday 5:00 PM", score: "3 - 2" },
             { id: 2, gw: "Church Tournament - Matchday 2", teamA: "St. Peter Stars", teamB: "St. Michael Heroes", dateTime: "Saturday 6:00 PM", score: "TBD" }
         ];
@@ -735,12 +732,7 @@
         let tempTransferSquad = [];
 
         function saveState() {
-            localStorage.setItem('mg_players', JSON.stringify(players));
             localStorage.setItem('mg_users', JSON.stringify(users));
-            localStorage.setItem('mg_fixtures', JSON.stringify(fixtures));
-            localStorage.setItem('mg_news', JSON.stringify(news));
-            localStorage.setItem('mg_deadline', deadline);
-            localStorage.setItem('mg_transfers_limit', freeTransfersLimit.toString());
             if (currentUser) {
                 localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
             } else {
