@@ -11,6 +11,10 @@
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
     
+    <!-- Firebase SDKs Compat -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    
     <style>
         body {
             font-family: 'Poppins', sans-serif;
@@ -677,10 +681,22 @@
         <p>© 2026 Mar Girgis Church Youth League. All Rights Reserved.</p>
     </footer>
 
-    <!-- JavaScript Application Logic -->
+    <!-- JavaScript Application Logic with Firebase Real-time Firestore Sync -->
     <script>
-        // Database Connection String Configuration
-        const DATABASE_URL = "postgresql://neondb_owner:npg_UOBW8bYv5ygi@ep-red-credit-b9afqda1-pooler.c-7.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
+        // Firebase Configuration
+        const firebaseConfig = {
+          apiKey: "AIzaSyC5d0IUIfJaTogxyNtAJpNfiJg03EUsjEI",
+          authDomain: "church-fantasy.firebaseapp.com",
+          projectId: "church-fantasy",
+          storageBucket: "church-fantasy.firebasestorage.app",
+          messagingSenderId: "185433728474",
+          appId: "1:185433728474:web:b93952f5270623a7628ce3",
+          measurementId: "G-NH6YQFVYJL"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
 
         const SQUAD_BUDGET = 50.0;
         const SQUAD_SIZE = 7;
@@ -700,42 +716,114 @@
             { id: 11, name: "John Nabil", position: "FWD", price: 7.0, points: 14 }
         ];
 
-        let players = JSON.parse(localStorage.getItem('mg_players')) || DEFAULT_PLAYERS;
-        let users = JSON.parse(localStorage.getItem('mg_users')) || [];
-        let fixtures = JSON.parse(localStorage.getItem('mg_fixtures')) || [
-            { id: 1, gw: "Church Tournament - Matchday 1", teamA: "St. Mark Warriors", teamB: "St. George Lions", dateTime: "Friday 5:00 PM", score: "3 - 2" },
-            { id: 2, gw: "Church Tournament - Matchday 2", teamA: "St. Peter Stars", teamB: "St. Michael Heroes", dateTime: "Saturday 6:00 PM", score: "TBD" }
-        ];
-        let news = JSON.parse(localStorage.getItem('mg_news')) || [
-            { id: 1, title: "Welcome to Mar Girgis Fantasy!", body: "Build your 7-player squad within £50.0M budget. Starting XI consists of 5 players, and 2 substitutes on the bench.", date: "Oct 2026" }
-        ];
-        let deadline = localStorage.getItem('mg_deadline') || "2026-11-01T18:00";
-        let freeTransfersLimit = parseInt(localStorage.getItem('mg_transfers_limit') || "2");
+        let players = [];
+        let users = [];
+        let fixtures = [];
+        let news = [];
+        let deadline = "2026-11-01T18:00";
+        let freeTransfersLimit = 2;
 
         let currentUser = JSON.parse(localStorage.getItem('mg_current_user')) || null;
         let isAdminUnlocked = false;
         let currentPosFilter = 'ALL';
         let tempTransferSquad = [];
 
-        function saveState() {
-            localStorage.setItem('mg_players', JSON.stringify(players));
-            localStorage.setItem('mg_users', JSON.stringify(users));
-            localStorage.setItem('mg_fixtures', JSON.stringify(fixtures));
-            localStorage.setItem('mg_news', JSON.stringify(news));
-            localStorage.setItem('mg_deadline', deadline);
-            localStorage.setItem('mg_transfers_limit', freeTransfersLimit.toString());
+        // Real-time Listeners Setup from Firebase Firestore
+        function initFirebaseListeners() {
+            // 1. Listen to Players
+            db.collection("players").onSnapshot((snapshot) => {
+                if (snapshot.empty) {
+                    // Seed default players if empty
+                    DEFAULT_PLAYERS.forEach(p => {
+                        db.collection("players").doc(String(p.id)).set(p);
+                    });
+                } else {
+                    players = [];
+                    snapshot.forEach(doc => {
+                        players.push(doc.data());
+                    });
+                }
+                renderMarketList();
+                if(isAdminUnlocked) renderAdminPlayersTable();
+            });
+
+            // 2. Listen to Settings (Deadline & Transfers Limit)
+            db.collection("settings").doc("leagueConfig").onSnapshot((doc) => {
+                if (doc.exists) {
+                    const data = doc.data();
+                    if (data.deadline) deadline = data.deadline;
+                    if (data.transfersLimit !== undefined) freeTransfersLimit = data.transfersLimit;
+                } else {
+                    db.collection("settings").doc("leagueConfig").set({
+                        deadline: deadline,
+                        transfersLimit: freeTransfersLimit
+                    });
+                }
+                startDeadlineTimer();
+                if(isAdminUnlocked) {
+                    document.getElementById('admin-deadline-input').value = deadline;
+                    document.getElementById('admin-transfers-limit-input').value = freeTransfersLimit;
+                }
+            });
+
+            // 3. Listen to Users / Standings
+            db.collection("users").onSnapshot((snapshot) => {
+                users = [];
+                snapshot.forEach(doc => {
+                    users.push(doc.data());
+                });
+                if (currentUser) {
+                    const fresh = users.find(u => u.id === currentUser.id);
+                    if (fresh) currentUser = fresh;
+                }
+                updateNavActions();
+                if (currentUser) {
+                    renderMySquadTab();
+                }
+                renderStandings();
+                if(isAdminUnlocked) populateAdminSquadInspectorSelect();
+            });
+
+            // 4. Listen to Fixtures
+            db.collection("fixtures").orderBy("id", "desc").onSnapshot((snapshot) => {
+                if (snapshot.empty) {
+                    const defaultFixtures = [
+                        { id: 1, gw: "Church Tournament - Matchday 1", teamA: "St. Mark Warriors", teamB: "St. George Lions", dateTime: "Friday 5:00 PM", score: "3 - 2" },
+                        { id: 2, gw: "Church Tournament - Matchday 2", teamA: "St. Peter Stars", teamB: "St. Michael Heroes", dateTime: "Saturday 6:00 PM", score: "TBD" }
+                    ];
+                    defaultFixtures.forEach(f => db.collection("fixtures").doc(String(f.id)).set(f));
+                } else {
+                    fixtures = [];
+                    snapshot.forEach(doc => fixtures.push(doc.data()));
+                }
+                renderFixtures();
+            });
+
+            // 5. Listen to News
+            db.collection("news").orderBy("id", "desc").onSnapshot((snapshot) => {
+                if (snapshot.empty) {
+                    const defaultNews = { id: 1, title: "Welcome to Mar Girgis Fantasy!", body: "Build your 7-player squad within £50.0M budget. Starting XI consists of 5 players, and 2 substitutes on the bench.", date: "Oct 2026" };
+                    db.collection("news").doc(String(defaultNews.id)).set(defaultNews);
+                } else {
+                    news = [];
+                    snapshot.forEach(doc => news.push(doc.data()));
+                }
+                renderNews();
+            });
+        }
+
+        function saveUserState() {
             if (currentUser) {
                 localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
+                db.collection("users").doc(String(currentUser.id)).set(currentUser);
             } else {
                 localStorage.removeItem('mg_current_user');
             }
         }
 
         function initApp() {
-            updateNavActions();
+            initFirebaseListeners();
             startDeadlineTimer();
-            renderNews();
-            renderFixtures();
 
             if (currentUser) {
                 document.getElementById('auth-section').classList.add('hidden');
@@ -762,7 +850,7 @@
             const found = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === pass);
             if (found) {
                 currentUser = found;
-                saveState();
+                localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
                 initApp();
             } else {
                 alert("Invalid Username or Password!");
@@ -801,16 +889,17 @@
                 }
             };
 
-            users.push(newUser);
-            currentUser = newUser;
-            saveState();
-            initApp();
+            db.collection("users").doc(String(newUser.id)).set(newUser).then(() => {
+                currentUser = newUser;
+                localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
+                initApp();
+            });
         }
 
         function handleLogout() {
             currentUser = null;
             isAdminUnlocked = false;
-            saveState();
+            localStorage.removeItem('mg_current_user');
             location.reload();
         }
 
@@ -869,22 +958,23 @@
                 const timerDisp = document.getElementById('deadline-timer');
 
                 const formatted = new Date(deadline).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-                disp.innerText = `Deadline: ${formatted} | Transfers & lineups lock automatically.`;
+                if(disp) disp.innerText = `Deadline: ${formatted} | Transfers & lineups lock automatically.`;
 
-                if (diff <= 0) {
-                    timerDisp.innerText = "DEADLINE PASSED (LOCKED)";
-                    timerDisp.classList.replace('text-amber-400', 'text-red-500');
-                } else {
-                    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-                    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                    const secs = Math.floor((diff % (1000 * 60)) / 1000);
-                    timerDisp.innerText = `${days}d ${hours}h ${mins}m ${secs}s`;
-                    timerDisp.classList.replace('text-red-500', 'text-amber-400');
+                if (timerDisp) {
+                    if (diff <= 0) {
+                        timerDisp.innerText = "DEADLINE PASSED (LOCKED)";
+                        timerDisp.classList.replace('text-amber-400', 'text-red-500');
+                    } else {
+                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                        const secs = Math.floor((diff % (1000 * 60)) / 1000);
+                        timerDisp.innerText = `${days}d ${hours}h ${mins}m ${secs}s`;
+                        timerDisp.classList.replace('text-red-500', 'text-amber-400');
+                    }
                 }
             }
             updateTimer();
-            setInterval(updateTimer, 1000);
         }
 
         function isDeadlinePassed() {
@@ -912,7 +1002,7 @@
             document.getElementById('chip-count-fh').innerText = `${2 - (chips['Free Hit'] || 0)} Left`;
             document.getElementById('chip-count-bb').innerText = `${2 - (chips['Bench Boost'] || 0)} Left`;
 
-            if (currentUser.squad.length < SQUAD_SIZE) {
+            if (!currentUser.squad || currentUser.squad.length < SQUAD_SIZE) {
                 document.getElementById('pitch-gk').innerHTML = `<p class="text-xs text-amber-300 bg-black/60 px-4 py-2 rounded-lg">Please go to Transfers tab to complete your 7-player squad.</p>`;
                 document.getElementById('pitch-def').innerHTML = '';
                 document.getElementById('pitch-mid').innerHTML = '';
@@ -927,8 +1017,8 @@
         let selectedSubId = null;
 
         function renderPitchAndBench() {
-            const starters = currentUser.starters.map(id => players.find(p => p.id === id)).filter(Boolean);
-            const bench = currentUser.bench.map(id => players.find(p => p.id === id)).filter(Boolean);
+            const starters = (currentUser.starters || []).map(id => players.find(p => p.id === id)).filter(Boolean);
+            const bench = (currentUser.bench || []).map(id => players.find(p => p.id === id)).filter(Boolean);
 
             const gkList = starters.filter(p => p.position === 'GK');
             const defList = starters.filter(p => p.position === 'DEF');
@@ -998,7 +1088,7 @@
                 if (currentUser.captainId === playerId) currentUser.captainId = currentUser.viceCaptainId;
                 currentUser.viceCaptainId = playerId;
             }
-            saveState();
+            saveUserState();
             renderMySquadTab();
         }
 
@@ -1028,7 +1118,7 @@
                         currentUser.starters.push(selectedSubId);
                         currentUser.bench.push(playerId);
                     }
-                    saveState();
+                    saveUserState();
                 }
                 selectedSubId = null;
             }
@@ -1041,7 +1131,8 @@
                 return;
             }
 
-            const usedCount = (currentUser.chipsUsed && currentUser.chipsUsed[chipName]) || 0;
+            if(!currentUser.chipsUsed) currentUser.chipsUsed = {'Triple Captain': 0, 'Wildcard': 0, 'Free Hit': 0, 'Bench Boost': 0};
+            const usedCount = currentUser.chipsUsed[chipName] || 0;
             if (usedCount >= 2) {
                 alert(`You have used all 2 allowed activations for ${chipName}!`);
                 return;
@@ -1055,7 +1146,7 @@
                 currentUser.chipsUsed[chipName] = usedCount + 1;
                 alert(`${chipName} Chip activated for this Gameweek!`);
             }
-            saveState();
+            saveUserState();
             renderMySquadTab();
         }
 
@@ -1081,6 +1172,7 @@
 
         function renderMarketList() {
             const tbody = document.getElementById('market-players-tbody');
+            if(!tbody) return;
             const searchVal = (document.getElementById('player-search-input').value || "").toLowerCase();
 
             let filtered = players.filter(p => {
@@ -1149,6 +1241,7 @@
 
         function renderSelectedTransfers() {
             const container = document.getElementById('selected-transfer-list');
+            if(!container) return;
             const selectedObjects = tempTransferSquad.map(id => players.find(p => p.id === id)).filter(Boolean);
 
             const spent = selectedObjects.reduce((acc, p) => acc + p.price, 0);
@@ -1207,13 +1300,14 @@
                 currentUser.viceCaptainId = currentUser.starters[1] || null;
             }
 
-            saveState();
+            saveUserState();
             alert("Squad transfers saved successfully!");
             switchTab('my-squad');
         }
 
         function renderStandings() {
             const tbody = document.getElementById('standings-tbody');
+            if(!tbody) return;
             const sorted = [...users].sort((a,b) => b.points - a.points);
 
             if (sorted.length === 0) {
@@ -1238,6 +1332,7 @@
 
         function renderFixtures() {
             const container = document.getElementById('fixtures-list-container');
+            if(!container) return;
             if (fixtures.length === 0) {
                 container.innerHTML = `<p class="text-xs text-slate-400 col-span-2 text-center py-6">No fixtures announced yet.</p>`;
                 return;
@@ -1260,6 +1355,7 @@
 
         function renderNews() {
             const container = document.getElementById('news-posts-container');
+            if(!container) return;
             if (news.length === 0) {
                 container.innerHTML = `<p class="text-xs text-slate-400 py-6">No news announcements yet.</p>`;
                 return;
@@ -1306,21 +1402,24 @@
             const val = document.getElementById('admin-deadline-input').value;
             if (val) {
                 deadline = val;
-                saveState();
-                alert("Deadline setting updated!");
-                startDeadlineTimer();
+                db.collection("settings").doc("leagueConfig").update({ deadline: deadline }).then(() => {
+                    alert("Deadline setting updated and synced globally!");
+                    startDeadlineTimer();
+                });
             }
         }
 
         function saveTransfersLimitSetting() {
             const val = parseInt(document.getElementById('admin-transfers-limit-input').value || "2");
             freeTransfersLimit = val;
-            saveState();
-            alert("Free transfers limit updated for all users!");
+            db.collection("settings").doc("leagueConfig").update({ transfersLimit: freeTransfersLimit }).then(() => {
+                alert("Free transfers limit updated for all users!");
+            });
         }
 
         function populateAdminSquadInspectorSelect() {
             const sel = document.getElementById('admin-squad-inspector-select');
+            if(!sel) return;
             if (users.length === 0) {
                 sel.innerHTML = `<option value="">No managers registered</option>`;
                 return;
@@ -1332,6 +1431,7 @@
         function renderAdminSquadInspection() {
             const sel = document.getElementById('admin-squad-inspector-select');
             const view = document.getElementById('admin-squad-inspection-view');
+            if(!sel || !view) return;
             const userId = parseInt(sel.value);
 
             const u = users.find(x => x.id === userId);
@@ -1383,6 +1483,7 @@
 
         function renderAdminPlayersTable() {
             const tbody = document.getElementById('admin-players-tbody');
+            if(!tbody) return;
             tbody.innerHTML = players.map(p => `
                 <tr class="hover:bg-slate-800/40 transition">
                     <td class="p-2.5 font-bold text-white">${p.name}</td>
@@ -1403,9 +1504,9 @@
             const player = players.find(p => p.id === playerId);
             if (!player) return;
             player.points += pts;
-            recalculateAllUserPoints();
-            saveState();
-            renderAdminPlayersTable();
+            db.collection("players").doc(String(player.id)).set(player).then(() => {
+                recalculateAllUserPoints();
+            });
         }
 
         function recalculateAllUserPoints() {
@@ -1428,6 +1529,7 @@
                     });
                 }
                 u.points = sum;
+                db.collection("users").doc(String(u.id)).set(u);
             });
         }
 
@@ -1465,37 +1567,36 @@
             const price = parseFloat(document.getElementById('modal-player-price').value);
             const pts = parseInt(document.getElementById('modal-player-points').value);
 
+            let targetPlayer;
             if (idVal) {
-                const p = players.find(x => x.id === parseInt(idVal));
-                if (p) {
-                    p.name = name;
-                    p.position = pos;
-                    p.price = price;
-                    p.points = pts;
+                targetPlayer = players.find(x => x.id === parseInt(idVal));
+                if (targetPlayer) {
+                    targetPlayer.name = name;
+                    targetPlayer.position = pos;
+                    targetPlayer.price = price;
+                    targetPlayer.points = pts;
                 }
             } else {
-                const newP = {
+                targetPlayer = {
                     id: Date.now(),
                     name: name,
                     position: pos,
                     price: price,
                     points: pts
                 };
-                players.push(newP);
             }
 
-            recalculateAllUserPoints();
-            saveState();
-            closePlayerModal();
-            renderAdminPlayersTable();
+            db.collection("players").doc(String(targetPlayer.id)).set(targetPlayer).then(() => {
+                recalculateAllUserPoints();
+                closePlayerModal();
+            });
         }
 
         function deletePlayer(playerId) {
             if (confirm("Are you sure you want to delete this player?")) {
-                players = players.filter(p => p.id !== playerId);
-                recalculateAllUserPoints();
-                saveState();
-                renderAdminPlayersTable();
+                db.collection("players").doc(String(playerId)).delete().then(() => {
+                    recalculateAllUserPoints();
+                });
             }
         }
 
@@ -1509,11 +1610,10 @@
                 dateTime: document.getElementById('fix-date-time').value.trim(),
                 score: document.getElementById('fix-score').value.trim() || "TBD"
             };
-            fixtures.unshift(newF);
-            saveState();
-            alert("Fixture published!");
-            renderFixtures();
-            e.target.reset();
+            db.collection("fixtures").doc(String(newF.id)).set(newF).then(() => {
+                alert("Fixture published!");
+                e.target.reset();
+            });
         }
 
         function handleAddNews(e) {
@@ -1524,11 +1624,10 @@
                 body: document.getElementById('news-body-input').value.trim(),
                 date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
             };
-            news.unshift(newN);
-            saveState();
-            alert("News posted!");
-            renderNews();
-            e.target.reset();
+            db.collection("news").doc(String(newN.id)).set(newN).then(() => {
+                alert("News posted!");
+                e.target.reset();
+            });
         }
 
         window.addEventListener('DOMContentLoaded', initApp);
