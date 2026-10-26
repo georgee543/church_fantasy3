@@ -681,9 +681,9 @@
         <p>© 2026 Mar Girgis Church Youth League. All Rights Reserved.</p>
     </footer>
 
-    <!-- JavaScript Application Logic with Firebase Real-time Firestore Sync -->
+    <!-- JavaScript Application Logic -->
     <script>
-        // Firebase Configuration
+        // Firebase Configuration for Real-time Deadline Sync ONLY
         const firebaseConfig = {
           apiKey: "AIzaSyC5d0IUIfJaTogxyNtAJpNfiJg03EUsjEI",
           authDomain: "church-fantasy.firebaseapp.com",
@@ -693,10 +693,10 @@
           appId: "1:185433728474:web:b93952f5270623a7628ce3",
           measurementId: "G-NH6YQFVYJL"
         };
-
-        // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+
+        const DATABASE_URL = "postgresql://neondb_owner:npg_UOBW8bYv5ygi@ep-red-credit-b9afqda1-pooler.c-7.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
 
         const SQUAD_BUDGET = 50.0;
         const SQUAD_SIZE = 7;
@@ -716,114 +716,53 @@
             { id: 11, name: "John Nabil", position: "FWD", price: 7.0, points: 14 }
         ];
 
-        let players = [];
-        let users = [];
-        let fixtures = [];
-        let news = [];
-        let deadline = "2026-11-01T18:00";
-        let freeTransfersLimit = 2;
+        let players = JSON.parse(localStorage.getItem('mg_players')) || DEFAULT_PLAYERS;
+        let users = JSON.parse(localStorage.getItem('mg_users')) || [];
+        let fixtures = JSON.parse(localStorage.getItem('mg_fixtures')) || [
+            { id: 1, gw: "Church Tournament - Matchday 1", teamA: "St. Mark Warriors", teamB: "St. George Lions", dateTime: "Friday 5:00 PM", score: "3 - 2" },
+            { id: 2, gw: "Church Tournament - Matchday 2", teamA: "St. Peter Stars", teamB: "St. Michael Heroes", dateTime: "Saturday 6:00 PM", score: "TBD" }
+        ];
+        let news = JSON.parse(localStorage.getItem('mg_news')) || [
+            { id: 1, title: "Welcome to Mar Girgis Fantasy!", body: "Build your 7-player squad within £50.0M budget. Starting XI consists of 5 players, and 2 substitutes on the bench.", date: "Oct 2026" }
+        ];
+        let deadline = localStorage.getItem('mg_deadline') || "2026-11-01T18:00";
+        let freeTransfersLimit = parseInt(localStorage.getItem('mg_transfers_limit') || "2");
 
         let currentUser = JSON.parse(localStorage.getItem('mg_current_user')) || null;
         let isAdminUnlocked = false;
         let currentPosFilter = 'ALL';
         let tempTransferSquad = [];
 
-        // Real-time Listeners Setup from Firebase Firestore
-        function initFirebaseListeners() {
-            // 1. Listen to Players
-            db.collection("players").onSnapshot((snapshot) => {
-                if (snapshot.empty) {
-                    // Seed default players if empty
-                    DEFAULT_PLAYERS.forEach(p => {
-                        db.collection("players").doc(String(p.id)).set(p);
-                    });
-                } else {
-                    players = [];
-                    snapshot.forEach(doc => {
-                        players.push(doc.data());
-                    });
-                }
-                renderMarketList();
-                if(isAdminUnlocked) renderAdminPlayersTable();
-            });
-
-            // 2. Listen to Settings (Deadline & Transfers Limit)
-            db.collection("settings").doc("leagueConfig").onSnapshot((doc) => {
-                if (doc.exists) {
-                    const data = doc.data();
-                    if (data.deadline) deadline = data.deadline;
-                    if (data.transfersLimit !== undefined) freeTransfersLimit = data.transfersLimit;
-                } else {
-                    db.collection("settings").doc("leagueConfig").set({
-                        deadline: deadline,
-                        transfersLimit: freeTransfersLimit
-                    });
-                }
-                startDeadlineTimer();
-                if(isAdminUnlocked) {
-                    document.getElementById('admin-deadline-input').value = deadline;
-                    document.getElementById('admin-transfers-limit-input').value = freeTransfersLimit;
-                }
-            });
-
-            // 3. Listen to Users / Standings
-            db.collection("users").onSnapshot((snapshot) => {
-                users = [];
-                snapshot.forEach(doc => {
-                    users.push(doc.data());
-                });
-                if (currentUser) {
-                    const fresh = users.find(u => u.id === currentUser.id);
-                    if (fresh) currentUser = fresh;
-                }
-                updateNavActions();
-                if (currentUser) {
-                    renderMySquadTab();
-                }
-                renderStandings();
-                if(isAdminUnlocked) populateAdminSquadInspectorSelect();
-            });
-
-            // 4. Listen to Fixtures
-            db.collection("fixtures").orderBy("id", "desc").onSnapshot((snapshot) => {
-                if (snapshot.empty) {
-                    const defaultFixtures = [
-                        { id: 1, gw: "Church Tournament - Matchday 1", teamA: "St. Mark Warriors", teamB: "St. George Lions", dateTime: "Friday 5:00 PM", score: "3 - 2" },
-                        { id: 2, gw: "Church Tournament - Matchday 2", teamA: "St. Peter Stars", teamB: "St. Michael Heroes", dateTime: "Saturday 6:00 PM", score: "TBD" }
-                    ];
-                    defaultFixtures.forEach(f => db.collection("fixtures").doc(String(f.id)).set(f));
-                } else {
-                    fixtures = [];
-                    snapshot.forEach(doc => fixtures.push(doc.data()));
-                }
-                renderFixtures();
-            });
-
-            // 5. Listen to News
-            db.collection("news").orderBy("id", "desc").onSnapshot((snapshot) => {
-                if (snapshot.empty) {
-                    const defaultNews = { id: 1, title: "Welcome to Mar Girgis Fantasy!", body: "Build your 7-player squad within £50.0M budget. Starting XI consists of 5 players, and 2 substitutes on the bench.", date: "Oct 2026" };
-                    db.collection("news").doc(String(defaultNews.id)).set(defaultNews);
-                } else {
-                    news = [];
-                    snapshot.forEach(doc => news.push(doc.data()));
-                }
-                renderNews();
-            });
-        }
-
-        function saveUserState() {
+        function saveState() {
+            localStorage.setItem('mg_players', JSON.stringify(players));
+            localStorage.setItem('mg_users', JSON.stringify(users));
+            localStorage.setItem('mg_fixtures', JSON.stringify(fixtures));
+            localStorage.setItem('mg_news', JSON.stringify(news));
+            localStorage.setItem('mg_deadline', deadline);
+            localStorage.setItem('mg_transfers_limit', freeTransfersLimit.toString());
             if (currentUser) {
                 localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
-                db.collection("users").doc(String(currentUser.id)).set(currentUser);
             } else {
                 localStorage.removeItem('mg_current_user');
             }
         }
 
         function initApp() {
-            initFirebaseListeners();
+            updateNavActions();
             startDeadlineTimer();
+            renderNews();
+            renderFixtures();
+
+            // Real-time listener for Deadline across all devices via Firebase
+            db.collection("settings").doc("leagueConfig").onSnapshot((doc) => {
+                if (doc.exists && doc.data().deadline) {
+                    deadline = doc.data().deadline;
+                    localStorage.setItem('mg_deadline', deadline);
+                    startDeadlineTimer();
+                    const adminInput = document.getElementById('admin-deadline-input');
+                    if(adminInput) adminInput.value = deadline;
+                }
+            });
 
             if (currentUser) {
                 document.getElementById('auth-section').classList.add('hidden');
@@ -850,7 +789,7 @@
             const found = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === pass);
             if (found) {
                 currentUser = found;
-                localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
+                saveState();
                 initApp();
             } else {
                 alert("Invalid Username or Password!");
@@ -889,17 +828,16 @@
                 }
             };
 
-            db.collection("users").doc(String(newUser.id)).set(newUser).then(() => {
-                currentUser = newUser;
-                localStorage.setItem('mg_current_user', JSON.stringify(currentUser));
-                initApp();
-            });
+            users.push(newUser);
+            currentUser = newUser;
+            saveState();
+            initApp();
         }
 
         function handleLogout() {
             currentUser = null;
             isAdminUnlocked = false;
-            localStorage.removeItem('mg_current_user');
+            saveState();
             location.reload();
         }
 
@@ -1002,7 +940,7 @@
             document.getElementById('chip-count-fh').innerText = `${2 - (chips['Free Hit'] || 0)} Left`;
             document.getElementById('chip-count-bb').innerText = `${2 - (chips['Bench Boost'] || 0)} Left`;
 
-            if (!currentUser.squad || currentUser.squad.length < SQUAD_SIZE) {
+            if (currentUser.squad.length < SQUAD_SIZE) {
                 document.getElementById('pitch-gk').innerHTML = `<p class="text-xs text-amber-300 bg-black/60 px-4 py-2 rounded-lg">Please go to Transfers tab to complete your 7-player squad.</p>`;
                 document.getElementById('pitch-def').innerHTML = '';
                 document.getElementById('pitch-mid').innerHTML = '';
@@ -1017,8 +955,8 @@
         let selectedSubId = null;
 
         function renderPitchAndBench() {
-            const starters = (currentUser.starters || []).map(id => players.find(p => p.id === id)).filter(Boolean);
-            const bench = (currentUser.bench || []).map(id => players.find(p => p.id === id)).filter(Boolean);
+            const starters = currentUser.starters.map(id => players.find(p => p.id === id)).filter(Boolean);
+            const bench = currentUser.bench.map(id => players.find(p => p.id === id)).filter(Boolean);
 
             const gkList = starters.filter(p => p.position === 'GK');
             const defList = starters.filter(p => p.position === 'DEF');
@@ -1088,7 +1026,7 @@
                 if (currentUser.captainId === playerId) currentUser.captainId = currentUser.viceCaptainId;
                 currentUser.viceCaptainId = playerId;
             }
-            saveUserState();
+            saveState();
             renderMySquadTab();
         }
 
@@ -1118,7 +1056,7 @@
                         currentUser.starters.push(selectedSubId);
                         currentUser.bench.push(playerId);
                     }
-                    saveUserState();
+                    saveState();
                 }
                 selectedSubId = null;
             }
@@ -1131,8 +1069,7 @@
                 return;
             }
 
-            if(!currentUser.chipsUsed) currentUser.chipsUsed = {'Triple Captain': 0, 'Wildcard': 0, 'Free Hit': 0, 'Bench Boost': 0};
-            const usedCount = currentUser.chipsUsed[chipName] || 0;
+            const usedCount = (currentUser.chipsUsed && currentUser.chipsUsed[chipName]) || 0;
             if (usedCount >= 2) {
                 alert(`You have used all 2 allowed activations for ${chipName}!`);
                 return;
@@ -1146,7 +1083,7 @@
                 currentUser.chipsUsed[chipName] = usedCount + 1;
                 alert(`${chipName} Chip activated for this Gameweek!`);
             }
-            saveUserState();
+            saveState();
             renderMySquadTab();
         }
 
@@ -1300,7 +1237,7 @@
                 currentUser.viceCaptainId = currentUser.starters[1] || null;
             }
 
-            saveUserState();
+            saveState();
             alert("Squad transfers saved successfully!");
             switchTab('my-squad');
         }
@@ -1402,7 +1339,12 @@
             const val = document.getElementById('admin-deadline-input').value;
             if (val) {
                 deadline = val;
-                db.collection("settings").doc("leagueConfig").update({ deadline: deadline }).then(() => {
+                saveState();
+                // Push change to Firebase so it syncs globally across all devices instantly
+                db.collection("settings").doc("leagueConfig").set({
+                    deadline: deadline,
+                    transfersLimit: freeTransfersLimit
+                }, { merge: true }).then(() => {
                     alert("Deadline setting updated and synced globally!");
                     startDeadlineTimer();
                 });
@@ -1412,7 +1354,11 @@
         function saveTransfersLimitSetting() {
             const val = parseInt(document.getElementById('admin-transfers-limit-input').value || "2");
             freeTransfersLimit = val;
-            db.collection("settings").doc("leagueConfig").update({ transfersLimit: freeTransfersLimit }).then(() => {
+            saveState();
+            db.collection("settings").doc("leagueConfig").set({
+                deadline: deadline,
+                transfersLimit: freeTransfersLimit
+            }, { merge: true }).then(() => {
                 alert("Free transfers limit updated for all users!");
             });
         }
@@ -1504,9 +1450,9 @@
             const player = players.find(p => p.id === playerId);
             if (!player) return;
             player.points += pts;
-            db.collection("players").doc(String(player.id)).set(player).then(() => {
-                recalculateAllUserPoints();
-            });
+            recalculateAllUserPoints();
+            saveState();
+            renderAdminPlayersTable();
         }
 
         function recalculateAllUserPoints() {
@@ -1529,7 +1475,6 @@
                     });
                 }
                 u.points = sum;
-                db.collection("users").doc(String(u.id)).set(u);
             });
         }
 
@@ -1567,36 +1512,37 @@
             const price = parseFloat(document.getElementById('modal-player-price').value);
             const pts = parseInt(document.getElementById('modal-player-points').value);
 
-            let targetPlayer;
             if (idVal) {
-                targetPlayer = players.find(x => x.id === parseInt(idVal));
-                if (targetPlayer) {
-                    targetPlayer.name = name;
-                    targetPlayer.position = pos;
-                    targetPlayer.price = price;
-                    targetPlayer.points = pts;
+                const p = players.find(x => x.id === parseInt(idVal));
+                if (p) {
+                    p.name = name;
+                    p.position = pos;
+                    p.price = price;
+                    p.points = pts;
                 }
             } else {
-                targetPlayer = {
+                const newP = {
                     id: Date.now(),
                     name: name,
                     position: pos,
                     price: price,
                     points: pts
                 };
+                players.push(newP);
             }
 
-            db.collection("players").doc(String(targetPlayer.id)).set(targetPlayer).then(() => {
-                recalculateAllUserPoints();
-                closePlayerModal();
-            });
+            recalculateAllUserPoints();
+            saveState();
+            closePlayerModal();
+            renderAdminPlayersTable();
         }
 
         function deletePlayer(playerId) {
             if (confirm("Are you sure you want to delete this player?")) {
-                db.collection("players").doc(String(playerId)).delete().then(() => {
-                    recalculateAllUserPoints();
-                });
+                players = players.filter(p => p.id !== playerId);
+                recalculateAllUserPoints();
+                saveState();
+                renderAdminPlayersTable();
             }
         }
 
@@ -1610,10 +1556,11 @@
                 dateTime: document.getElementById('fix-date-time').value.trim(),
                 score: document.getElementById('fix-score').value.trim() || "TBD"
             };
-            db.collection("fixtures").doc(String(newF.id)).set(newF).then(() => {
-                alert("Fixture published!");
-                e.target.reset();
-            });
+            fixtures.unshift(newF);
+            saveState();
+            alert("Fixture published!");
+            renderFixtures();
+            e.target.reset();
         }
 
         function handleAddNews(e) {
@@ -1624,10 +1571,11 @@
                 body: document.getElementById('news-body-input').value.trim(),
                 date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
             };
-            db.collection("news").doc(String(newN.id)).set(newN).then(() => {
-                alert("News posted!");
-                e.target.reset();
-            });
+            news.unshift(newN);
+            saveState();
+            alert("News posted!");
+            renderNews();
+            e.target.reset();
         }
 
         window.addEventListener('DOMContentLoaded', initApp);
